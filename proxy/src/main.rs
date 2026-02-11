@@ -131,16 +131,13 @@ fn handle_one_tcp_connection(
             let n = ssl_stream.read(&mut buffer)?;
             if n == 0 {
                 // TODO eof???
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "eof"));
+                return Err(std::io::Error::other("eof"));
             }
-            let result = request
-                .parse(&buffer[..n])
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let result = request.parse(&buffer[..n]).map_err(std::io::Error::other)?;
             if result.is_partial() {
                 // TODO request didn't fit in the buffer. probably need to handle this, not
                 // error?
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     "request is still partial after one read()",
                 ));
             }
@@ -156,9 +153,7 @@ fn handle_one_tcp_connection(
                         None
                     }
                 })
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::Other, "missing host header")
-                })?;
+                .ok_or_else(|| std::io::Error::other("missing host header"))?;
 
             if host_header == "2fa.{{HOST}}.{{DOMAIN}}".as_bytes() {
                 let host = HostId("TODO".into());
@@ -207,24 +202,24 @@ fn handle_one_tcp_connection(
                 return Ok(());
             }
             // TODO emit 404
-            return Ok(());
+            Ok(())
         }
         Err(openssl::ssl::HandshakeError::Failure(mid_handshake_stream))
             if THIS_IS_A_PROXY_REQUEST.get() =>
         {
             let host = HostId("TODO".into());
 
-            return handle_proxy(&host, mid_handshake_stream);
+            handle_proxy(&host, mid_handshake_stream)
         }
         _ => {
             // TODO error accepting SSL
-            return Ok(());
+            Ok(())
         }
     }
 }
 
 thread_local! {
-    static THIS_IS_A_PROXY_REQUEST: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static THIS_IS_A_PROXY_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 ////////
@@ -242,7 +237,7 @@ fn main() -> std::io::Result<()> {
              -> Result<openssl::ssl::ClientHelloResponse, openssl::error::ErrorStack> {
                 let sni = ssl_ref
                     .servername(openssl::ssl::NameType::HOST_NAME)
-                    .ok_or_else(|| openssl::error::ErrorStack::get())?;
+                    .ok_or_else(openssl::error::ErrorStack::get)?;
                 if sni == "{{HOST}}.{{DOMAIN}}" {
                     THIS_IS_A_PROXY_REQUEST.set(true);
                     // TODO there might be more to this...?
@@ -256,7 +251,7 @@ fn main() -> std::io::Result<()> {
                     // TODO configure the correct cert
                     return Ok(openssl::ssl::ClientHelloResponse::SUCCESS);
                 }
-                return Err(openssl::error::ErrorStack::get());
+                Err(openssl::error::ErrorStack::get())
             },
         );
         builder.build()
