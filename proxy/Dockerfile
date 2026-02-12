@@ -6,7 +6,6 @@ FROM rust:1.93 AS dev-base
 
         # build dependencies
         COPY Cargo.toml ./
-        COPY Cargo.lock ./
         COPY src/_deps.rs ./src/_deps.rs
         RUN cargo build --bin _deps
 

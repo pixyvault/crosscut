@@ -1,6 +1,11 @@
 proxy (mole?)
 =============
 
+```
+sudo ifconfig lo0 alias 10.5.5.5 up
+echo "10.5.5.5 dlowe.pixyvault.com *.dlowe.pixyvault.com" | sudo tee -a /etc/hosts
+```
+
 This is a cloud service written in threaded Rust.
 
 What kind of connections does it handle?

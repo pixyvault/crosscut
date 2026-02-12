@@ -1,4 +1,5 @@
 /// host is the natural unique identifier for a hosting device
+#[derive(Debug)]
 struct HostId(String);
 
 /// consumer is the natural unique identifier for a consumer (an email or phone number)
@@ -34,8 +35,6 @@ impl TotpChallengeSender for email_address::EmailAddress {
     }
 }
 
-///
-
 trait PushNotifier {
     type Identifier;
     type Error;
@@ -57,8 +56,6 @@ impl PushNotifier for ApplePushNotificationService {
     }
 }
 
-///
-
 fn register_host(
     _host: &HostId,
     _push_notifier_identifier: ApplePushNotificationServiceDeviceToken,
@@ -70,7 +67,9 @@ fn register_host(
 
 fn handle_pseudo_push_notification(
     _host: &HostId,
-    _websocket: tungstenite::protocol::WebSocket<openssl::ssl::SslStream<std::net::TcpStream>>,
+    _websocket: tungstenite::protocol::WebSocket<
+        rustls::Stream<rustls::ServerConnection, std::net::TcpStream>,
+    >,
 ) -> Result<(), std::io::Error> {
     loop {}
 }
@@ -86,8 +85,7 @@ fn register_consumer(
 
 fn handle_proxy_auth(
     _host: &HostId,
-    _consumer: &ConsumerId,
-    _consumer_stream: openssl::ssl::SslStream<std::net::TcpStream>,
+    _consumer_stream: rustls::Stream<rustls::ServerConnection, std::net::TcpStream>,
 ) -> Result<(), std::io::Error> {
     // fetch totp secret for (HostId, ConsumerId) (or 404)
     // missing or invalid basic auth header:
@@ -100,7 +98,8 @@ fn handle_proxy_auth(
 
 fn handle_proxy(
     _host: &HostId,
-    _consumer_stream: openssl::ssl::MidHandshakeSslStream<std::net::TcpStream>,
+    _client_hello: rustls::server::ClientHello,
+    _consumer_stream: std::net::TcpStream,
 ) -> Result<(), std::io::Error> {
     // send push notification on best channel to host
     // park
@@ -110,165 +109,210 @@ fn handle_proxy(
 fn handle_tunnel(
     _host: &HostId,
     _tunnel_nonce: &TunnelNonce,
-    _websocket: tungstenite::protocol::WebSocket<openssl::ssl::SslStream<std::net::TcpStream>>,
+    _websocket: tungstenite::protocol::WebSocket<
+        rustls::Stream<rustls::ServerConnection, std::net::TcpStream>,
+    >,
 ) -> Result<(), std::io::Error> {
     // connect host_stream to consumer_stream
     Ok(())
 }
 
 fn handle_one_tcp_connection(
-    ssl_acceptor: openssl::ssl::SslAcceptor,
-    tcp_stream: std::net::TcpStream,
+    domain: &String,
+    mut tcp_stream: std::net::TcpStream,
 ) -> Result<(), std::io::Error> {
-    match ssl_acceptor.accept(tcp_stream) {
-        Ok(mut ssl_stream) => {
-            use std::io::Read;
+    // Read TLS packets until we've consumed a full client hello and are ready to accept a connection.
+    let accepted = {
+        let mut acceptor = rustls::server::Acceptor::default();
 
-            let mut headers = [httparse::EMPTY_HEADER; 64];
-            let mut request = httparse::Request::new(&mut headers);
+        loop {
+            acceptor.read_tls(&mut tcp_stream)?;
 
-            let mut buffer = [0; 8192];
-            let n = ssl_stream.read(&mut buffer)?;
-            if n == 0 {
-                // TODO eof???
-                return Err(std::io::Error::other("eof"));
-            }
-            let result = request.parse(&buffer[..n]).map_err(std::io::Error::other)?;
-            if result.is_partial() {
-                // TODO request didn't fit in the buffer. probably need to handle this, not
-                // error?
-                return Err(std::io::Error::other(
-                    "request is still partial after one read()",
-                ));
-            }
-            let partially_read_part = buffer[result.unwrap()..n].to_vec();
-
-            let host_header = request
-                .headers
-                .iter()
-                .find_map(|h| {
-                    if h.name == "Host" {
-                        Some(h.value)
-                    } else {
-                        None
-                    }
-                })
-                .ok_or_else(|| std::io::Error::other("missing host header"))?;
-
-            if host_header == "2fa.{{HOST}}.{{DOMAIN}}".as_bytes() {
-                let host = HostId("TODO".into());
-                let consumer = ConsumerId::TODO;
-                return handle_proxy_auth(&host, &consumer, ssl_stream);
-            }
-            if host_header == "{{DOMAIN}}".as_bytes() {
-                if request.path == Some("/{{HOST}}") {
-                    let host = HostId("TODO".into());
-                    let push_notification_identifier = ApplePushNotificationServiceDeviceToken;
-
-                    return register_host(&host, push_notification_identifier);
+            match acceptor.accept() {
+                Ok(Some(accepted)) => break accepted,
+                Ok(None) => continue,
+                Err((e, mut alert)) => {
+                    let _ = alert.write_all(&mut tcp_stream);
+                    return Err(std::io::Error::other(e));
                 }
-                if request.path == Some("/{{HOST}}/consumer/{{CONSUMER}}") {
-                    let host = HostId("TODO".into());
-                    let consumer = ConsumerId::TODO;
-                    let otp_secret = otp::Secret::from_bytes("TODO".as_bytes());
-                    return register_consumer(&host, &consumer, &otp_secret);
-                }
-                if request.path == Some("/{{HOST}}/pseudo-push-notification") {
-                    let host = HostId("TODO".into());
-
-                    // TODO check and send upgrade headers
-                    let websocket = tungstenite::protocol::WebSocket::from_partially_read(
-                        ssl_stream,
-                        partially_read_part,
-                        tungstenite::protocol::Role::Server,
-                        None,
-                    );
-                    return handle_pseudo_push_notification(&host, websocket);
-                }
-                if request.path == Some("/{{HOST}}/tunnel/{{NONCE}}") {
-                    let host = HostId("TODO".into());
-                    let tunnel_nonce = TunnelNonce("TODO".into());
-
-                    // TODO check and send upgrade headers
-                    let websocket = tungstenite::protocol::WebSocket::from_partially_read(
-                        ssl_stream,
-                        partially_read_part,
-                        tungstenite::protocol::Role::Server,
-                        None,
-                    );
-                    return handle_tunnel(&host, &tunnel_nonce, websocket);
-                }
-                // TODO emit 404
-                return Ok(());
             }
-            // TODO emit 404
-            Ok(())
         }
-        Err(openssl::ssl::HandshakeError::Failure(mid_handshake_stream))
-            if THIS_IS_A_PROXY_REQUEST.get() =>
-        {
-            let host = HostId("TODO".into());
+    };
 
-            handle_proxy(&host, mid_handshake_stream)
+    let client_hello = accepted.client_hello();
+
+    let Some(servername) = client_hello.server_name() else {
+        return Err(std::io::Error::other("missing sni server name"));
+    };
+
+    match dbg!(servername.ends_with(dbg!(domain)).then(|| {
+        servername[..(servername.len() - domain.len())]
+            .split_terminator('.')
+            .collect::<Vec<&str>>()
+    }))
+    .as_deref()
+    {
+        Some([]) => {
+            println!("mode: hostless");
+
+            // TODO configure the correct cert
+            let config = std::sync::Arc::new(
+                rustls::server::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(
+                        vec![],
+                        rustls_pki_types::PrivatePkcs8KeyDer::from(vec![]).into(),
+                    )
+                    .map_err(std::io::Error::other)?,
+            );
+
+            let mut ssl_connection =
+                accepted.into_connection(config).map_err(|(e, mut alert)| {
+                    let _ = alert.write_all(&mut tcp_stream);
+                    std::io::Error::other(e)
+                })?;
+            let ssl_stream = rustls::Stream::new(&mut ssl_connection, &mut tcp_stream);
+
+            handle_hostless(domain, ssl_stream)
         }
-        _ => {
-            // TODO error accepting SSL
-            Ok(())
+        Some([verb, host_string]) if *verb == "2fa" => {
+            let host = HostId(host_string.to_string());
+            println!("mode: proxy_auth for {host:?}");
+
+            // TODO configure the correct cert
+            let config = std::sync::Arc::new(
+                rustls::server::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(
+                        vec![],
+                        rustls_pki_types::PrivatePkcs8KeyDer::from(vec![]).into(),
+                    )
+                    .map_err(std::io::Error::other)?,
+            );
+
+            let mut ssl_connection =
+                accepted.into_connection(config).map_err(|(e, mut alert)| {
+                    let _ = alert.write_all(&mut tcp_stream);
+                    std::io::Error::other(e)
+                })?;
+            let ssl_stream = rustls::Stream::new(&mut ssl_connection, &mut tcp_stream);
+
+            handle_proxy_auth(&host, ssl_stream)
         }
+        Some([host_string]) => {
+            let host = HostId(host_string.to_string());
+            println!("mode: proxy for {host:?}");
+            handle_proxy(&host, client_hello, tcp_stream)
+        }
+        _ => Err(std::io::Error::other(format!(
+            "unexpected sni server name: {servername}"
+        ))),
     }
 }
 
-thread_local! {
-    static THIS_IS_A_PROXY_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+fn handle_hostless(
+    domain: &String,
+    mut ssl_stream: rustls::Stream<rustls::ServerConnection, std::net::TcpStream>,
+) -> Result<(), std::io::Error> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut request = httparse::Request::new(&mut headers);
+
+    let mut buffer = [0; 8192];
+    use std::io::Read;
+    let n = ssl_stream.read(&mut buffer)?;
+    if n == 0 {
+        // TODO eof???
+        return Err(std::io::Error::other("eof"));
+    }
+    let result = request.parse(&buffer[..n]).map_err(std::io::Error::other)?;
+    if result.is_partial() {
+        // TODO request didn't fit in the buffer. probably need to handle this, not
+        // error?
+        return Err(std::io::Error::other(
+            "request is still partial after one read()",
+        ));
+    }
+    let partially_read_part = buffer[result.unwrap()..n].to_vec();
+
+    let http_host_header = request
+        .headers
+        .iter()
+        .find_map(|h| {
+            if h.name == "Host" {
+                Some(h.value)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| std::io::Error::other("missing host header"))?;
+
+    if http_host_header != domain.as_bytes() {
+        // TODO emit 404
+        return Ok(());
+    }
+
+    if request.path == Some("/{{HOST}}") {
+        let host = HostId("TODO".into());
+        let push_notification_identifier = ApplePushNotificationServiceDeviceToken;
+
+        return register_host(&host, push_notification_identifier);
+    }
+    if request.path == Some("/{{HOST}}/consumer/{{CONSUMER}}") {
+        let host = HostId("TODO".into());
+        let consumer = ConsumerId::TODO;
+        let otp_secret = otp::Secret::from_bytes("TODO".as_bytes());
+        return register_consumer(&host, &consumer, &otp_secret);
+    }
+    if request.path == Some("/{{HOST}}/pseudo-push-notification") {
+        let host = HostId("TODO".into());
+
+        // TODO check and send upgrade headers
+        let websocket = tungstenite::protocol::WebSocket::from_partially_read(
+            ssl_stream,
+            partially_read_part,
+            tungstenite::protocol::Role::Server,
+            None,
+        );
+        return handle_pseudo_push_notification(&host, websocket);
+    }
+    if request.path == Some("/{{HOST}}/tunnel/{{NONCE}}") {
+        let host = HostId("TODO".into());
+        let tunnel_nonce = TunnelNonce("TODO".into());
+
+        // TODO check and send upgrade headers
+        let websocket = tungstenite::protocol::WebSocket::from_partially_read(
+            ssl_stream,
+            partially_read_part,
+            tungstenite::protocol::Role::Server,
+            None,
+        );
+        return handle_tunnel(&host, &tunnel_nonce, websocket);
+    }
+    // TODO emit 404
+    Ok(())
 }
 
-////////
-
 fn main() -> std::io::Result<()> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:443")?;
+    let domain = std::env::var("DOMAIN").map_err(std::io::Error::other)?;
 
-    let ssl_acceptor = {
-        let mut builder = openssl::ssl::SslAcceptor::mozilla_intermediate_v5(
-            openssl::ssl::SslMethod::tls_server(),
-        )?;
-        builder.set_client_hello_callback(
-            |ssl_ref: &mut openssl::ssl::SslRef,
-             _ssl_alert: &mut openssl::ssl::SslAlert|
-             -> Result<openssl::ssl::ClientHelloResponse, openssl::error::ErrorStack> {
-                let sni = ssl_ref
-                    .servername(openssl::ssl::NameType::HOST_NAME)
-                    .ok_or_else(openssl::error::ErrorStack::get)?;
-                if sni == "{{HOST}}.{{DOMAIN}}" {
-                    THIS_IS_A_PROXY_REQUEST.set(true);
-                    // TODO there might be more to this...?
-                    return Ok(openssl::ssl::ClientHelloResponse::RETRY);
-                }
-                if sni == "2fa.{{HOST}}.{{DOMAIN}}" {
-                    // TODO configure the correct cert
-                    return Ok(openssl::ssl::ClientHelloResponse::SUCCESS);
-                }
-                if sni == "{{DOMAIN}}" {
-                    // TODO configure the correct cert
-                    return Ok(openssl::ssl::ClientHelloResponse::SUCCESS);
-                }
-                Err(openssl::error::ErrorStack::get())
-            },
-        );
-        builder.build()
-    };
+    let listener = std::net::TcpListener::bind("0.0.0.0:443")?;
 
+    println!("starting main loop");
     std::thread::scope(|scope| {
         for maybe_tcp_stream in listener.incoming() {
             let Ok(tcp_stream) = maybe_tcp_stream else {
-                // TODO problem accepting
+                println!("problem accepting: {maybe_tcp_stream:?}");
                 break;
             };
 
+            println!("accepted: {tcp_stream:?}");
             scope.spawn(|| {
-                let _ = handle_one_tcp_connection(ssl_acceptor.clone(), tcp_stream);
+                let _ = dbg!(handle_one_tcp_connection(&domain, tcp_stream));
+                println!("done");
             });
         }
     });
+    println!("exiting main loop");
 
     Ok(())
 }

@@ -25,4 +25,3 @@ exec docker run ${DOCKER_RUN_ARGUMENTS:-"--detach"} \
    --hostname proxy \
    --publish "0.0.0.0:443:443/tcp" \
    `./build --quiet --target ${DOCKER_BUILD_TARGET:-run}`
-

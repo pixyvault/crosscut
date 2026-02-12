@@ -11,8 +11,9 @@ path = "src/_deps.rs"
 [dependencies]
 email_address = { version = "0.2.9", default-features = false, features = [] }
 httparse = { version = "1.10.1", default-features = false, features = [] }
-openssl = { version = "0.10.75", default-features = false, features = [] }
 otp-auth = { version = "0.1.0", default-features = false, features = [] }
 phonenumber = { version = "0.3.9", default-features = false, features = [] }
+rustls = { version = "0.23.36", default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-pki-types = { version = "1.14.0", default-features = false, features = [] }
 tungstenite = { version = "0.28.0", default-features = false, features = ["httparse"] }
 url = { version = "2.5.8", default-features = false, features = [] }
