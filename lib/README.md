@@ -26,8 +26,11 @@ And to multithread:
 So then what are the actions?
 
  * init()
-   - get our push-notification identifier (e.g. APNS device token)
-   - send it oob to the proxy
+   - generate and locally save an ssl cert
+   - send oob to the proxy:
+     - the ACME DNS challenge for the new cert
+     - our push-notification identifier (e.g. APNS device token)
+   - sign the new ssl cert
 
  * share(file, recipient)
    - if this is the first time we're sharing with this recipient:

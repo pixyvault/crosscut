@@ -12,7 +12,11 @@ What kind of connections does it handle?
 
  * register host
  * https://{{DOMAIN}}/{{HOST}}/
-   - persists a push-notification identifier (e.g. APNS device token) for this host
+   - persist a push-notification identifier (e.g. APNS device token) for this host
+   - publish a TXT record for dns-challenge based ACME ssl cert auth of {{HOST}}.{{DOMAIN}}
+   - generate and locally save an ssl cert for 2fa.{{HOST}}.{{DOMAIN}}
+   - publish a TXT record for dns-challenge based ACME ssl cert of 2fa.{{HOST}}.{{DOMAIN}}
+   - sign the 2fa cert
 
  * register TOTP secret
  * https://{{DOMAIN}}/{{HOST}}/consumer/{{CONSUMER}}

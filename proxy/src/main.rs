@@ -145,12 +145,14 @@ fn handle_one_tcp_connection(
         return Err(std::io::Error::other("missing sni server name"));
     };
 
-    match dbg!(servername.ends_with(dbg!(domain)).then(|| {
-        servername[..(servername.len() - domain.len())]
-            .split_terminator('.')
-            .collect::<Vec<&str>>()
-    }))
-    .as_deref()
+    match servername
+        .ends_with(domain)
+        .then(|| {
+            servername[..(servername.len() - domain.len())]
+                .split_terminator('.')
+                .collect::<Vec<&str>>()
+        })
+        .as_deref()
     {
         Some([]) => {
             println!("mode: hostless");
