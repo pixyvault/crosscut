@@ -2,8 +2,12 @@
 
 ## DECISIONS
 
- * use `anyhow` for errors (this is tools, not libraries)
  * supported runtime: docker
+ * avoid async (use threads)
+ * `anyhow` for errors (this is tools, not library)
+ * `simple_logger` to stdout for logging (trust docker)
+ * `rustls` over `openssl` (the openssl API learning curve is ludicrous)
+ * `ureq` over `reqwest` (to dodge tokio)
 
 ```
 sudo ifconfig lo0 alias 10.5.5.5 up

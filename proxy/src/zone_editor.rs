@@ -7,16 +7,18 @@ pub(crate) struct ZoneEditor {
 
 impl ZoneEditor {
     pub(crate) fn new(domain: &str, cloudflare_dns_api_token: &str) -> anyhow::Result<Self> {
-        let client = reqwest::blocking::Client::new();
-        let zones: serde_json::Value = client
-            .request(
-                reqwest::Method::GET,
-                "https://api.cloudflare.com/client/v4/zones/",
+        let mut response = ureq::get("https://api.cloudflare.com/client/v4/zones/")
+            .header(
+                "Authorization",
+                format!("Bearer {cloudflare_dns_api_token}"),
             )
-            .bearer_auth(cloudflare_dns_api_token)
-            .send()?
-            .error_for_status()?
-            .json()?;
+            .call()?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("get /client/v4/zones: {response:?}")
+        }
+
+        let zones: serde_json::Value = response.body_mut().read_json()?;
 
         if !zones["success"].as_bool().expect("'success' to be boolean") {
             anyhow::bail!("in /client/v4/zones: {}", zones["errors"]);
@@ -51,25 +53,27 @@ impl ZoneEditor {
     }
 
     pub(crate) fn publish_acme_proof(&self, dns_proof: &str) -> anyhow::Result<()> {
-        let client = reqwest::blocking::Client::new();
-        let _: serde_json::Value = client
-            .request(
-                reqwest::Method::POST,
-                format!(
-                    "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
-                    self.zone_id
-                ),
-            )
-            .bearer_auth(&self.cloudflare_dns_api_token)
-            .json(&serde_json::json!({
-                "name": format!("_acme-challenge.{}", self.domain),
-                "ttl": 1,
-                "type": "TXT",
-                "content": dbg!(dns_proof),
-            }))
-            .send()?
-            .error_for_status()?
-            .json()?;
+        let response = ureq::post(format!(
+            "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
+            self.zone_id
+        ))
+        .header(
+            "Authorization",
+            format!("Bearer {}", self.cloudflare_dns_api_token),
+        )
+        .send_json(&serde_json::json!({
+            "name": format!("_acme-challenge.{}", self.domain),
+            "ttl": 1,
+            "type": "TXT",
+            "content": dbg!(dns_proof),
+        }))?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "post /client/v4/zones/{}/dns_records: {response:?}",
+                self.zone_id
+            );
+        }
 
         Ok(())
     }
