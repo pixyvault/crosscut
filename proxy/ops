@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -ex
+
+if [ $# -ne 1 ]; then
+        echo "usage: ${0} <DOMAIN>"
+        exit 1
+fi
+
+exec docker run \
+   --interactive \
+   --tty \
+   --env "DOMAIN=${1}" \
+   --mount "type=bind,source=${PWD},destination=/proxy" \
+   --mount "type=bind,source=${PWD}/../../secrets,destination=/secrets" \
+   `./build --quiet --target dev-base` cargo run --frozen --bin ops "$@"

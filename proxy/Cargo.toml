@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+[[bin]]
+name = "ops"
+path = "src/ops.rs"
+
 [dependencies]
+acme-rfc8555 = { version = "0.2.0", default-features = false, features = [] }
 email_address = { version = "0.2.9", default-features = false, features = [] }
 httparse = { version = "1.10.1", default-features = false, features = [] }
 otp-auth = { version = "0.1.0", default-features = false, features = [] }

@@ -1,3 +1,7 @@
 #!/usr/bin/env bash
 
+thing=$(docker create `docker build --quiet --target planner .`)
+docker cp $thing:/proxy/Cargo.lock - | tar -x
+docker rm ${thing} > /dev/null
+
 exec docker build "$@" .

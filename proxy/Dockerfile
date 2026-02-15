@@ -8,6 +8,7 @@ FROM rust:1.93 AS proxy-rust
 FROM proxy-rust AS planner
         # prepare dependencies
         COPY . .
+        RUN cargo update
         RUN cargo chef prepare --recipe-path recipe.json
 
 FROM proxy-rust AS dev-base
